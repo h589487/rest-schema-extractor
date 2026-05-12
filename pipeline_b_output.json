@@ -1,0 +1,140 @@
+{"endpoints": [
+  {
+    "path": "/items",
+    "method": "GET",
+    "fields": [
+      "category_id",
+      "_links",
+      "self",
+      "orders",
+      "category",
+      "price",
+      "name",
+      "id"
+    ]
+  },
+  {
+    "path": "/orders",
+    "method": "GET",
+    "fields": [
+      "quantity",
+      "item_id",
+      "_links",
+      "item",
+      "self",
+      "id",
+      "customer",
+      "name",
+      "email"
+    ]
+  },
+  {
+    "path": "/categories",
+    "method": "GET",
+    "fields": [
+      "_links",
+      "self",
+      "items",
+      "name",
+      "id"
+    ]
+  },
+  {
+    "path": "/info",
+    "method": "GET",
+    "fields": [
+      "author",
+      "name",
+      "version"
+    ]
+  },
+  {
+    "path": "/items/{id}",
+    "method": "GET",
+    "fields": [
+      "category_id",
+      "_links",
+      "self",
+      "orders",
+      "category",
+      "price",
+      "name",
+      "details",
+      "rating",
+      "stock",
+      "id"
+    ]
+  },
+  {
+    "path": "/items/1/orders",
+    "method": "GET",
+    "fields": [
+      "quantity",
+      "item_id",
+      "_links",
+      "item",
+      "self",
+      "order_id"
+    ]
+  },
+  {
+    "path": "/categories/{id}",
+    "method": "GET",
+    "fields": [
+      "_links",
+      "self",
+      "items",
+      "name",
+      "id"
+    ]
+  },
+  {
+    "path": "/items/2/orders",
+    "method": "GET",
+    "fields": [
+      "quantity",
+      "item_id",
+      "_links",
+      "item",
+      "self",
+      "order_id"
+    ]
+  },
+  {
+    "path": "/orders/{id}",
+    "method": "GET",
+    "fields": [
+      "quantity",
+      "item_id",
+      "_links",
+      "item",
+      "self",
+      "id",
+      "customer",
+      "name",
+      "email"
+    ]
+  },
+  {
+    "path": "/categories/1/items",
+    "method": "GET",
+    "fields": [
+      "_links",
+      "self",
+      "price",
+      "name",
+      "id"
+    ]
+  },
+  {
+    "path": "/categories/2/items",
+    "method": "GET",
+    "fields": [
+      "_links",
+      "self",
+      "price",
+      "name",
+      "id"
+    ]
+  }
+]}
