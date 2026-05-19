@@ -18,7 +18,7 @@ import java.util.*;
  * Web crawler for REST API discovery and mapping.
  * Implements breadth-first crawling with adaptive rate limiting.
  *
- * @author [Ditt navn]
+ * @author John Chen
  * Part of master thesis on automated API documentation
  */
 public class Crawler {
