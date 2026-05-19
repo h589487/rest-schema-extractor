@@ -15,16 +15,15 @@ import java.time.Instant;
 import java.util.*;
 
 /**
- * ARCHITECTURE OVERVIEW:
- * This Crawler follows a basic Orchestrator pattern.
- * 1. Data Representation: Uses Records for immutable state.
- * 2. State Management: Tracks visited URLs and the crawling queue (frontier).
- * 3. Networking: Handles HTTP communication and politeness (adaptive delays).
- * 4. Content Parsing: Separates HTML and JSON extraction logic.
+ * Web crawler for REST API discovery and mapping.
+ * Implements breadth-first crawling with adaptive rate limiting.
+ *
+ * @author [Ditt navn]
+ * Part of master thesis on automated API documentation
  */
 public class Crawler {
 
-    // --- DATA MODELS (Concerns: Data Representation) ---
+    // Core data structure for storing crawl results
     public record CrawlResult(
             String url,
             int statusCode,
@@ -37,61 +36,61 @@ public class Crawler {
 
     private record UrlEntry(String url, int depth) {}
 
-    // --- PIPELINE B: Inferred API Model ---
+    // Represents a discovered API endpoint with its schema
     public static class InferredEndpoint {
         public String path;
-        public String method = "GET"; // default assumption
+        public String method = "GET";
         public Set<String> fields = new LinkedHashSet<>();
     }
 
-    // --- STATE MANAGEMENT (Concerns: Crawl tracking and boundaries) ---
-    private final Set<String> visited       = new LinkedHashSet<>();
-    private final Queue<UrlEntry> frontier  = new LinkedList<>();
+    private final Set<String> visited = new LinkedHashSet<>();
+    private final Queue<UrlEntry> frontier = new LinkedList<>();
     private final List<CrawlResult> results = new ArrayList<>();
     private final Map<String, InferredEndpoint> inferred = new LinkedHashMap<>();
 
-    // --- NETWORKING CLIENT (Concerns: HTTP configuration) ---
     private final HttpClient client = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
     private final String baseUrl;
     private final int maxDepth;
-    private long delayMs = 300; // Mutable: can be adjusted dynamically based on rate limits
+    private long delayMs = 300; // adjusted dynamically based on server responses
 
     public Crawler(String baseUrl) {
         this(baseUrl, 3);
     }
 
     public Crawler(String baseUrl, int maxDepth) {
-        this.baseUrl  = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
+        this.baseUrl = baseUrl.endsWith("/") ? baseUrl : baseUrl + "/";
         this.maxDepth = maxDepth;
     }
 
-    // --- ORCHESTRATION LOGIC (Concerns: Controlling the crawl flow) ---
     public void start() {
         frontier.add(new UrlEntry(baseUrl, 0));
 
         while (!frontier.isEmpty()) {
             var entry = frontier.poll();
-
-            // Normalize URL to avoid duplicate crawling (trailing slash issue)
             String normalizedUrl = normalize(entry.url());
+
             if (visited.contains(normalizedUrl)) continue;
             if (entry.depth() > maxDepth) continue;
 
             visited.add(normalizedUrl);
-            System.out.printf("%n[depth %d] Crawling: %s%n", entry.depth(), normalizedUrl);
+            System.out.printf("[depth %d] Crawling: %s%n", entry.depth(), normalizedUrl);
 
-            // Politeness: Pause execution to respect server rate limits
-            try { Thread.sleep(delayMs); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            // Politeness delay - respect server load
+            try {
+                Thread.sleep(delayMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
 
             var result = fetch(normalizedUrl, entry.depth());
             if (result == null) continue;
 
             results.add(result);
 
-            // Expansion: Add new discoveries to the queue
+            // Add discovered URLs to queue
             for (String next : result.discoveredUrls()) {
                 if (!visited.contains(normalize(next)))
                     frontier.add(new UrlEntry(next, entry.depth() + 1));
@@ -105,13 +104,12 @@ public class Crawler {
         return Collections.unmodifiableList(results);
     }
 
-    // --- NETWORK LOGIC (Concerns: Request/Response handling with adaptive rate limiting) ---
     private CrawlResult fetch(String url, int depth) {
         try {
             var req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .timeout(Duration.ofSeconds(10))
-                    .header("User-Agent", "JavaCrawler/1.0 (MasterThesisProject)")
+                    .header("User-Agent", "Mozilla/5.0 (compatible; API-Discovery-Research/1.0; +mailto:589487@stud.hvl.no)")
                     .header("Accept", "application/json, text/html")
                     .GET()
                     .build();
@@ -120,99 +118,88 @@ public class Crawler {
             var res = client.send(req, HttpResponse.BodyHandlers.ofString());
             long elapsed = Duration.between(t0, Instant.now()).toMillis();
 
-            // Adaptive rate limiting: Respect server's rate limit headers
             adjustRateLimit(res);
 
             var ct = res.headers().firstValue("Content-Type").orElse("unknown");
             System.out.printf("  -> %d (%s) in %dms%n", res.statusCode(), ct, elapsed);
 
+            // Handle rate limiting
             if (res.statusCode() == 429) {
-                // Too Many Requests: Handle Retry-After if present
-                System.err.println("  rate limited (429), re-queueing");
+                System.err.println("Rate limited (429) - re-queueing URL");
                 handleRateLimitedResponse(res);
-                frontier.add(new UrlEntry(url, depth)); // Re-queue the URL
+                frontier.add(new UrlEntry(url, depth));
                 return null;
             }
 
             if (res.statusCode() != 200)
                 return new CrawlResult(url, res.statusCode(), ct, null, List.of(), elapsed, depth);
 
-            // Routing: Direct content to the correct parser based on MIME type
+            // Route to appropriate handler based on content type
             if (ct.contains("text/html"))
                 return handleHtml(url, res.body(), res.statusCode(), ct, elapsed, depth);
             else if (ct.toLowerCase().contains("json"))
                 return handleJson(url, res.body(), res.statusCode(), ct, elapsed, depth);
 
-            // Fallback: Try to detect JSON structure even if Content-Type is wrong
+            // Fallback: detect JSON by structure if Content-Type is misleading
             String trimmed = res.body().trim();
             if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-                System.out.println("  -> Detected JSON structure despite Content-Type: " + ct);
+                System.out.println("Detected JSON structure (Content-Type: " + ct + ")");
                 return handleJson(url, res.body(), res.statusCode(), ct, elapsed, depth);
             }
 
             return new CrawlResult(url, res.statusCode(), ct, res.body(), List.of(), elapsed, depth);
 
         } catch (Exception e) {
-            System.err.println("  failed: " + e.getMessage());
+            System.err.println("Failed to fetch " + url + ": " + e.getMessage());
             return null;
         }
     }
 
     /**
-     * Adjusts the request delay based on rate limit headers returned by the server.
-     * Implements adaptive politeness: increases delay when approaching rate limits,
-     * and respects explicit Retry-After directives.
+     * Adjusts crawl delay based on rate limit headers.
+     * Implements adaptive politeness as discussed in Chapter 3.2.
      */
     private void adjustRateLimit(HttpResponse<String> response) {
-        // Check for remaining rate limit quota
         response.headers().firstValue("X-RateLimit-Remaining").ifPresent(rem -> {
             try {
                 int remaining = Integer.parseInt(rem);
                 if (remaining < 5) {
-                    long newDelay = Math.max(delayMs, 1000); // Minimum 1 second when low on quota
+                    long newDelay = Math.max(delayMs, 1000);
                     if (newDelay != delayMs) {
-                        System.out.printf("  rate limit low (%d remaining), increasing delay to %dms%n",
+                        System.out.printf("Rate limit low (%d remaining), increasing delay to %dms%n",
                                 remaining, newDelay);
                         delayMs = newDelay;
                     }
                 }
-            } catch (NumberFormatException ignored) {
-                // Malformed header, ignore
-            }
+            } catch (NumberFormatException ignored) {}
         });
 
-        // Respect explicit Retry-After header (common with 429 responses)
         response.headers().firstValue("Retry-After").ifPresent(retry -> {
             try {
                 long retrySeconds = Long.parseLong(retry);
                 long newDelay = Math.max(delayMs, retrySeconds * 1000);
                 if (newDelay != delayMs) {
-                    System.out.printf("  retry-after header: delaying %dms%n", newDelay);
+                    System.out.printf("Retry-After header found: delaying %dms%n", newDelay);
                     delayMs = newDelay;
                 }
             } catch (NumberFormatException e) {
-                // Could be HTTP date format; for simplicity we ignore
+                // Could be HTTP date format - ignoring for now
             }
         });
     }
 
-    /**
-     * Handles 429 Too Many Requests response by respecting Retry-After.
-     * Called when the server explicitly indicates we are being rate limited.
-     */
     private void handleRateLimitedResponse(HttpResponse<String> response) {
         response.headers().firstValue("Retry-After").ifPresent(retry -> {
             try {
                 long retrySeconds = Long.parseLong(retry);
                 delayMs = Math.max(delayMs, retrySeconds * 1000);
-                System.out.printf("  rate limited, set delay to %dms%n", delayMs);
+                System.out.printf("Set delay to %dms based on Retry-After%n", delayMs);
             } catch (NumberFormatException ignored) {
-                delayMs = Math.max(delayMs, 2000); // Fallback to 2 seconds
+                delayMs = Math.max(delayMs, 2000); // fallback
             }
         });
     }
 
-    // --- HTML PARSING LOGIC (Concerns: DOM Extraction) ---
     private CrawlResult handleHtml(String url, String html, int status, String ct, long elapsed, int depth) {
         var doc = Jsoup.parse(html, url);
         var discovered = new ArrayList<String>();
@@ -227,9 +214,7 @@ public class Crawler {
         return new CrawlResult(url, status, ct, html, discovered, elapsed, depth);
     }
 
-    // --- JSON PARSING LOGIC (Concerns: Schema exploration & link inference) ---
     private CrawlResult handleJson(String url, String body, int status, String ct, long elapsed, int depth) {
-        System.out.println("  -> handleJson() called for: " + url);  // DEBUG
         String trimmed = body.trim();
         var discovered = new ArrayList<String>();
 
@@ -245,15 +230,15 @@ public class Crawler {
                 return new CrawlResult(url, status, ct, obj, discovered, elapsed, depth);
             }
         } catch (Exception e) {
-            System.err.println("  json parse failed: " + e.getMessage());
+            System.err.println("JSON parsing failed for " + url + ": " + e.getMessage());
         }
 
         return new CrawlResult(url, status, ct, body, discovered, elapsed, depth);
     }
 
-    // --- RECURSIVE EXTRACTION (Concerns: Traversal of unstructured data) ---
+    // Extract links and schema from JSON arrays
+    // Limited to first 10 items to prevent queue explosion
     private void extractFromArray(JSONArray arr, String currentUrl, List<String> discovered) {
-        // Limit processing to first 10 items to prevent exponential queue growth
         int limit = Math.min(arr.length(), 10);
         for (int i = 0; i < limit; i++) {
             if (arr.get(i) instanceof JSONObject obj)
@@ -261,38 +246,41 @@ public class Crawler {
         }
     }
 
+    /**
+     * Recursively extracts URLs and builds endpoint schema from JSON objects.
+     * Implements three discovery patterns:
+     * 1. Explicit URL fields (href, url, link, etc.)
+     * 2. RESTful ID inference (e.g., /posts -> /posts/1)
+     * 3. Nested object traversal
+     */
     private void extractFromObject(JSONObject obj, String currentUrl, List<String> discovered) {
-        System.out.println("  DEBUG: extractFromObject called for URL: " + currentUrl);
-        System.out.println("  DEBUG: JSON keys found: " + obj.keySet());
         for (String key : obj.keySet()) {
             var val = obj.get(key);
 
-            // Register endpoint and fields for Pipeline B
+            // Build endpoint model for Pipeline B
             String path = URI.create(currentUrl).getPath();
             if (path.isEmpty()) path = "/";
-
-            // Normalize numeric IDs at the end of the path
-            path = path.replaceAll("/\\d+$", "/{id}");
+            path = path.replaceAll("/\\d+$", "/{id}"); // normalize IDs
 
             inferred.putIfAbsent(path, new InferredEndpoint());
             inferred.get(path).path = path;
             inferred.get(path).fields.add(key);
 
-            // Pattern 1: Explicit URLs in string fields
+            // Pattern 1: Explicit URL fields
             if (val instanceof String s && looksLikeUrl(key, s)) {
                 var resolved = resolveUrl(s);
                 if (resolved != null) {
                     discovered.add(resolved);
                 }
             }
-            // Pattern 2: RESTful ID inference (e.g., /posts -> /posts/1)
+            // Pattern 2: RESTful ID inference
             else if ((val instanceof Integer || val instanceof Long) && looksLikeId(key)) {
                 String candidate = currentUrl.replaceAll("/$", "") + "/" + val;
                 if (candidate.startsWith(baseUrl)) {
                     discovered.add(candidate);
                 }
             }
-            // Pattern 3: Deep Traversal
+            // Pattern 3: Deep traversal
             else if (val instanceof JSONObject nested) {
                 extractFromObject(nested, currentUrl, discovered);
             } else if (val instanceof JSONArray nested) {
@@ -301,7 +289,6 @@ public class Crawler {
         }
     }
 
-    // --- UTILITIES (Concerns: String Analysis & Normalization) ---
     private boolean looksLikeUrl(String key, String value) {
         var urlKeys = Set.of("href", "url", "link", "self", "uri", "endpoint", "location");
         return urlKeys.contains(key.toLowerCase()) || value.startsWith("http") || value.startsWith("/");
@@ -323,7 +310,6 @@ public class Crawler {
         return url.replaceAll("/$", "");
     }
 
-    // --- REPORTING (Concerns: Data Visualization/Output) ---
     private void printReport() {
         long total = results.stream().mapToLong(CrawlResult::responseTimeMs).sum();
         double avg = results.isEmpty() ? 0 : (double) total / results.size();
@@ -333,11 +319,12 @@ public class Crawler {
         System.out.printf("Total visited: %d | Avg Latency: %.0fms | Max Depth: %d | Current delay: %dms%n",
                 visited.size(), avg, maxDepthReached, delayMs);
 
-        // --- PIPELINE B OUTPUT ---
+        // Write Pipeline B output (endpoint schema model)
         if (inferred.isEmpty()) {
-            System.out.println("\n⚠ No JSON endpoints found - skipping pipeline_b_output.json");
+            System.out.println("\nNo JSON endpoints discovered - skipping pipeline_b_output.json");
             return;
         }
+
         try {
             JSONObject out = new JSONObject();
             JSONArray arr = new JSONArray();
@@ -356,11 +343,12 @@ public class Crawler {
                 fw.write(out.toString(2));
             }
 
-            System.out.println("\n✓ Pipeline B model written to pipeline_b_output.json");
-            System.out.println("  Total endpoints discovered: " + inferred.size());
+            System.out.println("\nPipeline B output written to pipeline_b_output.json");
+            System.out.println("Total endpoints discovered: " + inferred.size());
 
         } catch (Exception e) {
             System.err.println("Failed to write Pipeline B output: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 }
