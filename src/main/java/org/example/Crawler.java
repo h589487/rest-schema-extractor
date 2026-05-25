@@ -78,7 +78,7 @@ public class Crawler {
             visited.add(normalizedUrl);
             System.out.printf("[depth %d] Crawling: %s%n", entry.depth(), normalizedUrl);
 
-            // Politeness delay - respect server load
+            // Politeness delay respect server load
             try {
                 Thread.sleep(delayMs);
             } catch (InterruptedException e) {
@@ -183,7 +183,7 @@ public class Crawler {
                     delayMs = newDelay;
                 }
             } catch (NumberFormatException e) {
-                // Could be HTTP date format - ignoring for now
+                // Could be HTTP date format  ignoring for now
             }
         });
     }
