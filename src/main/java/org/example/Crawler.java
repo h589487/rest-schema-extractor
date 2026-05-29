@@ -20,6 +20,9 @@ import java.util.*;
  *
  * @author John Chen
  * Part of master thesis on automated API documentation
+ *
+ * AI ASSISTANCE: Developed with GitHub Copilot. All AI suggestions were
+ * reviewed, tested, and validated by the author before inclusion.
  */
 public class Crawler {
 
